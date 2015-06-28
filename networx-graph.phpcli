@@ -1,0 +1,1105 @@
+<?php
+/*******************************************************************************
+networx-graph
+version: 2015-06-28 14:02 +0000
+
+using daily csv with bytes value
+*******************************************************************************/
+
+
+
+
+error_reporting(E_ALL);
+ini_set('memory_limit','1024M');
+
+
+
+
+/********************************************************************* config */
+define('CFG_SIZE_BORDER',         1); // border
+define('CFG_SIZE_PADDING',        2); // padding
+define('CFG_SIZE_GRAPH_HEIGHT', 200); // individual graph height
+define('CFG_SIZE_DAY',            1); // width per daily data
+define('CFG_SIZE_TEXT',           3); // size of text
+
+define('CFG_SIZE_TEXT_WIDTH',  imagefontwidth(CFG_SIZE_TEXT));  // width of text
+define('CFG_SIZE_TEXT_HEIGHT', imagefontheight(CFG_SIZE_TEXT)); // height of text
+
+define('CFG_COLOR_TRANSPARENT', ngColor(  0,  0,  0,127));
+
+define('CFG_COLOR_TEXT_MAIN',   ngColor(  0,  0,  0,  0));
+
+define('CFG_COLOR_BG_MAIN',     ngColor(128,128,128,  0));
+define('CFG_COLOR_BG_GRAPH',    ngColor(192,192,192,  0));
+
+define('CFG_COLOR_BORDER_MAIN', ngColor(  0,  0, 0,  0));
+
+define('CFG_COLOR_DATA_DOWN',   ngColor(160,  0,  0, 64));
+define('CFG_COLOR_DATA_UP',     ngColor(  0,  0,160, 64));
+define('CFG_COLOR_DATA_MIX',    ngColor(160,160,  0, 64));
+
+define('CFG_COLOR_YEAR_EVEN',   ngColor(160,  0,160,112));
+define('CFG_COLOR_MONTH_EVEN',  ngColor(  0,  0,  0,112));
+define('CFG_COLOR_WEEK_EVEN',   ngColor(  0,160,  0,112));
+
+define('CFG_COLOR_ROW_EVEN',    ngColor(  0,160,160,112));
+
+
+
+
+/******************************************************************************/
+// return 32bit ARGB color index
+function ngColor($r=0, $g=0, $b=0, $a=0) {
+   return ($a << 24) + ($r << 16) + ($g << 8) + $b;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraph($file) {
+
+
+   //******************************************************************* process
+   // get path from file
+   $path = dirname($file).'/';
+
+   // get csv data
+   $csv = file($file, FILE_SKIP_EMPTY_LINES|FILE_IGNORE_NEW_LINES);
+
+   // ignore header and total
+   $csv = array_slice($csv, 1, -1);
+
+
+
+
+   //****************************************************** build data structure
+   $func = function() use ($csv) {
+
+      $subArr = array(
+         'total' => 0,
+         'year'  => array(),
+         'month' => array(),
+         'day'   => array(),
+      );
+
+      $data = array(
+         'dl' => $subArr,
+         'ul' => $subArr,
+         'tl' => $subArr,
+      );
+
+      foreach($csv as $line) {
+
+         $bits = explode(',', $line);
+         $dl = $bits[1];
+         $ul = $bits[2];
+         $tl = $bits[3];
+
+         $date = explode('-', $bits[0]);
+         $y = $date[0];
+         $m = $date[1];
+         $d = $date[2];
+
+         // total
+         $data['dl']['total'] += $dl;
+         $data['ul']['total'] += $ul;
+         $data['tl']['total'] += $tl;
+
+         // year
+         $data['dl']['year'][$y] += $dl;
+         $data['ul']['year'][$y] += $ul;
+         $data['tl']['year'][$y] += $tl;
+
+         // year month
+         $data['dl']['month'][$y.$m] += $dl;
+         $data['ul']['month'][$y.$m] += $ul;
+         $data['tl']['month'][$y.$m] += $tl;
+
+         // year month day
+         $data['dl']['day'][$y.$m.$d] = $dl;
+         $data['ul']['day'][$y.$m.$d] = $ul;
+         $data['tl']['day'][$y.$m.$d] = $tl;
+
+
+         // years bracket
+         if(!isset($data['yearStart']) || $y < $data['yearStart']) {
+            $data['yearStart'] = $y;
+         }
+         if(!isset($data['yearEnd']) || $y > $data['yearEnd']) {
+            $data['yearEnd'] = $y;
+         }
+      }
+
+      // highest values
+      // total
+      $data['highest']['dlul']['total'] = max(array(
+         $data['dl']['total'],
+         $data['ul']['total']
+      ));
+
+      // year
+      $data['highest']['dl']['year'] = max($data['dl']['year']);
+      $data['highest']['ul']['year'] = max($data['ul']['year']);
+      $data['highest']['tl']['year'] = max($data['tl']['year']);
+
+      $data['highest']['dlul']['year'] = max(array(
+         $data['highest']['dl']['year'],
+         $data['highest']['ul']['year']
+      ));
+
+      // month
+      $data['highest']['dl']['month'] = max($data['dl']['month']);
+      $data['highest']['ul']['month'] = max($data['ul']['month']);
+      $data['highest']['tl']['month'] = max($data['tl']['month']);
+
+      $data['highest']['dlul']['month'] = max(array(
+         $data['highest']['dl']['month'],
+         $data['highest']['ul']['month']
+      ));
+
+      // day
+      $data['highest']['dl']['day'] = max($data['dl']['day']);
+      $data['highest']['ul']['day'] = max($data['ul']['day']);
+      $data['highest']['tl']['day'] = max($data['tl']['day']);
+
+      $data['highest']['dlul']['day'] = max(array(
+         $data['highest']['dl']['day'],
+         $data['highest']['ul']['day']
+      ));
+
+
+      return $data;
+   };
+   $data = $func();
+
+
+
+
+   //**************************************************************** days count
+   $func = function() use ($data) {
+
+      $days = array('total'=>0);
+
+      for($y=$data['yearStart']; $y<=$data['yearEnd']; ++$y) {
+
+         $days[$y] = 0;
+         for($m=1; $m<=12; ++$m) {
+
+            $m = sprintf('%02d', $m);
+
+            $count = gmdate('j', gmmktime(0, 0, 0, $m+1, 0, $y));
+
+            $days['total'] += $count;
+            $days[$y]      += $count;
+            $days[$y.$m]    = $count;
+         }
+      }
+
+      return $days;
+   };
+   $data['days'] = $func();
+
+
+
+
+   //************************************************************* create graphs
+   $graphW = $data['days']['total'] * CFG_SIZE_DAY;
+   $graphH = CFG_SIZE_GRAPH_HEIGHT;
+
+   $imgBgYear  = ngNewImg($graphW, $graphH);
+   $imgBgMonth = ngNewImg($graphW, $graphH);
+   $imgBgWeek  = ngNewImg($graphW, $graphH);
+
+   // headers
+   $graphHeaderH   = CFG_SIZE_TEXT_HEIGHT + CFG_SIZE_PADDING * 2;
+   $imgHeaderYear  = ngNewImg($graphW, $graphHeaderH);
+   $imgHeaderMonth = ngNewImg($graphW, $graphHeaderH);
+
+   // graphs
+   $imgGraphYear  = ngGraphScale($data, $data['highest']['dlul']['year']);
+   $imgGraphMonth = ngGraphScale($data, $data['highest']['dlul']['month']);
+   $imgGraphDay   = ngGraphScale($data, $data['highest']['dlul']['day']);
+   $imgGraphCumul = ngGraphScale($data, $data['highest']['dlul']['total']);
+
+   $imgHeaderMain = ngHeaderMain($file);
+
+
+   //********************************************************************** year
+   for($y=$data['yearStart']; $y<=$data['yearEnd']; ++$y) {
+
+      ngGraphYear($imgGraphYear, $data, $y);
+
+      ngGraphBgYear($imgBgYear, $data, $y);
+
+      ngGraphHeaderYear($imgHeaderYear, $data, $y);
+
+      //****************************************************************** month
+      for($m=1; $m<=12; ++$m) {
+
+         // reformat month
+         $m = sprintf('%02d', $m);
+
+         // timestamp
+         $timestamp = gmmktime(12,0,0,$m,1,$y);
+
+         ngGraphMonth($imgGraphMonth, $data, $y.$m);
+
+         ngGraphBgMonth($imgBgMonth, $data, $y, $m);
+
+         ngGraphHeaderMonth($imgHeaderMonth, $data, $y, $m, $timestamp);
+
+         //***************************************************************** day
+         for($d=1; $d<=$data['days'][$y.$m]; ++$d) {
+
+            // reformat day
+            $d = sprintf('%02d', $d);
+
+            // timestamp
+            $timestamp = gmmktime(12,0,0,$m,$d,$y);
+
+            ngGraphDay($imgGraphDay, $data, $y.$m.$d);
+
+            ngGraphCumul($imgGraphCumul, $data, $y.$m.$d);
+
+            ngGraphBgWeek($imgBgWeek, $data, $y, $m, $d, $timestamp);
+         }
+      }
+   }
+
+
+   //*********************************************************** finalize graphs
+
+
+   // reference for final composite
+   $imgMain = null;
+
+   // add background week
+   //ngImgUnderlay($imgHeaderMonth, $imgBgWeek);
+   //ngImgUnderlay($imgGraphYear,   $imgBgWeek);
+   //ngImgUnderlay($imgGraphMonth,  $imgBgWeek);
+   ngImgUnderlay($imgGraphDay,    $imgBgWeek);
+   ngImgUnderlay($imgGraphCumul,  $imgBgWeek);
+
+   imagedestroy($imgBgWeek);
+
+   // add background month
+   ngImgUnderlay($imgHeaderMonth, $imgBgMonth);
+   ngImgUnderlay($imgGraphYear,   $imgBgMonth);
+   ngImgUnderlay($imgGraphMonth,  $imgBgMonth);
+   ngImgUnderlay($imgGraphDay,    $imgBgMonth);
+   ngImgUnderlay($imgGraphCumul,  $imgBgMonth);
+
+   imagedestroy($imgBgMonth);
+
+   // add background year
+   ngImgUnderlay($imgHeaderYear,  $imgBgYear);
+   ngImgUnderlay($imgHeaderMonth, $imgBgYear);
+   ngImgUnderlay($imgGraphYear,   $imgBgYear);
+   ngImgUnderlay($imgGraphMonth,  $imgBgYear);
+   ngImgUnderlay($imgGraphDay,    $imgBgYear);
+   ngImgUnderlay($imgGraphCumul,  $imgBgYear);
+
+   imagedestroy($imgBgYear);
+
+   // add background color
+   ngImgBackgroundColor($imgHeaderMain,  CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgHeaderYear,  CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgHeaderMonth, CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgGraphYear,   CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgGraphMonth,  CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgGraphDay,    CFG_COLOR_BG_GRAPH);
+   ngImgBackgroundColor($imgGraphCumul,  CFG_COLOR_BG_GRAPH);
+
+   // add border
+   ngImgBorder($imgHeaderMain);
+   ngImgBorder($imgHeaderYear);
+   ngImgBorder($imgHeaderMonth);
+   ngImgBorder($imgGraphYear);
+   ngImgBorder($imgGraphMonth);
+   ngImgBorder($imgGraphDay);
+   ngImgBorder($imgGraphCumul);
+
+   // stack
+   ngImgStack($imgMain, $imgHeaderMain);
+   ngImgStack($imgMain, $imgHeaderYear);
+   ngImgStack($imgMain, $imgHeaderMonth);
+   ngImgStack($imgMain, $imgGraphYear);
+   ngImgStack($imgMain, $imgGraphMonth);
+   ngImgStack($imgMain, $imgGraphDay);
+   ngImgStack($imgMain, $imgGraphCumul);
+
+   // cleanup
+   imagedestroy($imgHeaderYear);
+   imagedestroy($imgHeaderMonth);
+
+   imagedestroy($imgGraphYear);
+   imagedestroy($imgGraphMonth);
+   imagedestroy($imgGraphDay);
+   imagedestroy($imgGraphCumul);
+
+   // composite padding
+   ngImgPadding($imgMain);
+
+   // composite border
+   ngImgBorder($imgMain);
+
+   // composite bg color
+   ngImgBackgroundColor($imgMain);
+
+   // save
+   $fileOut = $path.'networx-graph-'.gmdate('Ymd-His').'-gmt.png';
+   echo "\nSaving to $fileOut";
+   imagepng($imgMain, $fileOut);
+   imagedestroy($imgMain);
+}
+
+
+
+
+/******************************************************************************/
+function ngBinarySize($size, $unit=-1, $round=-1) {
+
+   $scale = array(
+      0=>'octets',
+      1=>'Kio', 2=>'Mio', 3=>'Gio', 4=>'Tio',
+      5=>'Pio', 6=>'Eio', 7=>'Zio', 8=>'Yio'
+   );
+
+   // auto unit
+   if($unit == -1) {
+      $unit = 0;
+      while($size >= 1024) {
+         ++$unit;
+         $size /= 1024;
+      }
+   }
+   // user unit
+   else {
+      $size /= pow(1024,$unit);
+   }
+
+   if($round >= 0) {
+      $size = round($size, $round);
+      $size = number_format($size, $round, '.', '');
+   }
+
+   return $size.' '.$scale[$unit];
+}
+
+
+
+
+/******************************************************************************/
+function ngNewImg($w=1, $h=1) {
+
+   // create img
+   $img = imagecreatetruecolor($w, $h);
+
+   // save alpha
+   imagesavealpha($img, true);
+
+   // enable anti aliasing
+   imageantialias($img, true);
+
+   // default background: transparent
+   imagealphablending($img, false);
+   imagefill($img, 0, 0, CFG_COLOR_TRANSPARENT);
+   imagealphablending($img, true);
+
+   return $img;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgBorder(&$img, $size=CFG_SIZE_BORDER) {
+
+   $imgW = imagesx($img);
+   $imgH = imagesy($img);
+
+   // create canvas
+   $new = ngNewImg(
+      $imgW + $size * 2,
+      $imgH + $size * 2
+   );
+
+   // fill with border color
+   imagefill($new, 0, 0, CFG_COLOR_BORDER_MAIN);
+
+   // turn central area transparent
+   imagealphablending($new, false);
+   imagefilledrectangle(
+      $new,
+      $size,             $size,
+      $size + $imgW - 1, $size + $imgH - 1,
+      CFG_COLOR_TRANSPARENT
+   );
+   imagealphablending($new, true);
+
+   // insert source on new canvas
+   imagecopy(
+      $new,  $img,
+      $size, $size,
+      0,     0,
+      $imgW, $imgH
+   );
+
+   // update reference
+   $img = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgBackgroundColor(&$img, $color=CFG_COLOR_BG_MAIN){
+
+   $imgW = imagesx($img);
+   $imgH = imagesy($img);
+
+   // create canvas
+   $new = ngNewImg($imgW, $imgH);
+
+   // fill
+   imagealphablending($new, false);
+   imagefill($new, 0, 0, $color);
+   imagealphablending($new, true);
+
+   // insert source on new canvas
+   imagecopy(
+      $new, $img,
+      0, 0,
+      0, 0,
+      $imgW, $imgH
+   );
+
+   // update reference
+   $img = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgOverlay(&$tgt, &$src) {
+
+   $tgtW = imagesx($tgt);
+   $tgtH = imagesy($tgt);
+
+   $srcW = imagesx($src);
+   $srcH = imagesy($src);
+
+   // create canvas
+   $new = ngNewImg($tgtW, $tgtH);
+
+   // insert target on new canvas
+   imagecopy(
+      $new, $tgt,
+      0, 0,
+      0, 0,
+      $tgtW, $tgtH
+   );
+
+   // insert source on new canvas
+   imagecopy(
+      $new, $src,
+      0, 0,
+      0, 0,
+      $srcW, $srcH
+   );
+
+   // update reference
+   $tgt = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgUnderlay(&$tgt, &$src) {
+
+   $tgtW = imagesx($tgt);
+   $tgtH = imagesy($tgt);
+
+   $srcW = imagesx($src);
+   $srcH = imagesy($src);
+
+   // create canvas
+   $new = ngNewImg($tgtW, $tgtH);
+
+   // insert source on new canvas
+   imagecopy(
+      $new, $src,
+      0, 0,
+      0, 0,
+      $srcW, $srcH
+   );
+
+   // insert target on new canvas
+   imagecopy(
+      $new, $tgt,
+      0, 0,
+      0, 0,
+      $tgtW, $tgtH
+   );
+
+   // update reference
+   $tgt = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgPadding(&$img, $size=CFG_SIZE_PADDING) {
+
+   $imgW = imagesx($img);
+   $imgH = imagesy($img);
+
+   // create canvas
+   $new = ngNewImg(
+      $imgW + $size * 2,
+      $imgH + $size * 2
+   );
+
+   // insert source on new canvas
+   imagecopy(
+      $new,  $img,
+      $size, $size,
+      0,     0,
+      $imgW, $imgH
+   );
+
+   // update reference
+   $img = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgPaddingTop(&$img, $size=CFG_SIZE_PADDING) {
+
+   $imgW = imagesx($img);
+   $imgH = imagesy($img);
+
+   // create canvas
+   $new = ngNewImg(
+      $imgW,
+      $imgH + $size
+   );
+
+   // insert source on new canvas
+   imagecopy(
+      $new,  $img,
+      0,     $size,
+      0,     0,
+      $imgW, $imgH
+   );
+
+   // update reference
+   $img = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngImgStack(&$tgt, &$src) {
+
+   // target exists, assume some content is already present
+   if(isset($tgt)) {
+
+      // add top padding
+      ngImgPaddingTop($src);
+
+      $tgtW = imagesx($tgt);
+      $tgtH = imagesy($tgt);
+   }
+   else {
+      $tgtW = 0;
+      $tgtH = 0;
+   }
+
+   $srcW = imagesx($src);
+   $srcH = imagesy($src);
+
+   // create canvas
+   $new = ngNewImg(
+      $tgtW > $srcW ? $tgtW : $srcW,
+      $tgtH + $srcH
+   );
+
+   // insert target on new canvas
+   if(isset($tgt)) {
+      imagecopy(
+         $new,  $tgt,
+         0,     0,
+         0,     0,
+         $tgtW, $tgtH
+      );
+   }
+
+   // insert source on new canvas
+   imagecopy(
+      $new,  $src,
+      0,     $tgtH,
+      0,     0,
+      $srcW, $srcH
+   );
+
+   // update reference
+   $tgt = $new;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphBar(&$img, $posX=0, $barW=0, $volumeD=0, $volumeU=0, $volumeMax=1) {
+
+   $imgW = imagesx($img);
+   $imgH = imagesy($img);
+
+   // height factor
+   $heightFactor = imagesy($img) / $volumeMax;
+
+   $heightD = round($heightFactor * $volumeD);
+   if($volumeD > 0 && $heightD < 1) {
+      $heightD = 1;
+   }
+
+   $heightU = round($heightFactor * $volumeU);
+   if($volumeU > 0 && $heightU < 1) {
+      $heightU = 1;
+   }
+
+   // set bars order and back color
+   if($heightD > $heightU) {
+      $frontH    = $heightU;
+      $backH     = $heightD;
+      $backColor = CFG_COLOR_DATA_DOWN;
+   }
+   else {
+      $frontH    = $heightD;
+      $backH     = $heightU;
+      $backColor = CFG_COLOR_DATA_UP;
+   }
+
+
+   // avoid negative drawing: only draw if height is above zero
+   if($frontH > 0) {
+      // draw front bar
+      imagefilledrectangle(
+         $img,
+         $posX,             $imgH - $frontH,
+         $posX + $barW - 1, $imgH - 1,
+         CFG_COLOR_DATA_MIX
+      );
+   }
+
+
+   // avoid negative drawing: only draw if height is above zero to
+   // or if height differs from front bar
+   if($backH > 0 && $frontH != $backH) {
+      // draw back bar
+      imagefilledrectangle(
+         $img,
+         $posX,             $imgH - $backH,
+         $posX + $barW - 1, $imgH - $frontH - 1,
+         $backColor
+      );
+   }
+}
+
+
+
+
+/******************************************************************************/
+function ngHeaderMain($file) {
+
+   $str = array(
+      'title' => 'Networx data usage graph',
+      'down'  => '   Download',
+      'up'    => '   Upload',
+      'file'  => 'file: '.basename($file),
+   );
+
+   $max = 0;
+   foreach($str as $s) {
+      $l = mb_strlen($s);
+      if($l > $max) {
+         $max = $l;
+      }
+   }
+
+   $imgW = $max * CFG_SIZE_TEXT_WIDTH + CFG_SIZE_PADDING * 2;
+   $imgH = CFG_SIZE_TEXT_HEIGHT * count($str) + CFG_SIZE_PADDING * 2;
+
+   $img = ngNewImg($imgW, $imgH);
+
+   $yPos = CFG_SIZE_PADDING;
+   foreach($str as $t=>$s) {
+      imagestring($img, CFG_SIZE_TEXT, CFG_SIZE_PADDING, $yPos, $s, CFG_COLOR_TEXT_MAIN);
+
+      if($t == 'down' || $t == 'up') {
+         $color = $t == 'down' ? CFG_COLOR_DATA_DOWN : CFG_COLOR_DATA_UP;
+         imagefilledrectangle(
+            $img,
+            CFG_SIZE_PADDING, $yPos,
+            CFG_SIZE_PADDING + CFG_SIZE_TEXT_WIDTH * 2, $yPos + CFG_SIZE_TEXT_HEIGHT - 1,
+            $color
+         );
+      }
+
+      $yPos += CFG_SIZE_TEXT_HEIGHT;
+   }
+
+   return $img;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphHeaderYear(&$img, $data, $y) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   imagestring($img, CFG_SIZE_TEXT, $xPos, CFG_SIZE_PADDING, " $y", CFG_COLOR_TEXT_MAIN);
+
+   // update starting pos
+   $xPos += $data['days'][$y] * CFG_SIZE_DAY;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphHeaderMonth(&$img, $data, $y, $m, $timestamp) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // text
+   $str = gmdate(' M', $timestamp);
+
+   imagestring($img, CFG_SIZE_TEXT, $xPos, CFG_SIZE_PADDING, $str, CFG_COLOR_TEXT_MAIN);
+
+   // update starting pos
+   $xPos += $data['days'][$y.$m] * CFG_SIZE_DAY;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphBgYear(&$img, $data, $y) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = $data['days'][$y] * CFG_SIZE_DAY;
+
+   // draw background: even month
+   if($y%2 == 0) {
+      imagefilledrectangle(
+         $img,
+         $xPos, 0,
+         $xPos + $barW - 1, imagesy($img) - 1,
+         CFG_COLOR_YEAR_EVEN
+      );
+   }
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphBgMonth(&$img, $data, $y, $m) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = $data['days'][$y.$m] * CFG_SIZE_DAY;
+
+   // draw background: even month
+   if($m%2 == 0) {
+      imagefilledrectangle(
+         $img,
+         $xPos, 0,
+         $xPos + $barW - 1, imagesy($img) - 1,
+         CFG_COLOR_MONTH_EVEN
+      );
+   }
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphBgWeek(&$img, $data, $y, $m, $d, $timestamp) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = CFG_SIZE_DAY;
+
+   // remember
+   static $weekCount = 0;
+   static $last     = 0;
+
+   $current = gmdate('W', $timestamp);
+
+   // new week
+   if($current != $last) {
+      ++$weekCount;
+   }
+   $last = $current;
+
+   // draw background: even month
+   if($weekCount%2 == 0) {
+      imagefilledrectangle(
+         $img,
+         $xPos, 0,
+         $xPos + $barW - 1, imagesy($img) - 1,
+         CFG_COLOR_WEEK_EVEN
+      );
+   }
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphScale($data, $maxValue) {
+
+   $labels   = array();
+   $labelMax = 0;
+
+   // row height and init
+   $rowH    = floor(CFG_SIZE_TEXT_HEIGHT + CFG_SIZE_PADDING * 2);
+   $yPos    = 0;
+   $yBottom = 0;
+
+   // prepare
+   while(($yBottom += $rowH) < CFG_SIZE_GRAPH_HEIGHT) {
+
+      $factor = (CFG_SIZE_GRAPH_HEIGHT - $yPos) / CFG_SIZE_GRAPH_HEIGHT;
+      $value = ngBinarySize($maxValue * $factor, -1, 2);
+
+      $labels[] = array(
+         'value' => $value,
+         'yPos1' => $yPos,
+         'yPos2' => $yBottom-1,
+      );
+
+      $valueLength = mb_strlen($value);
+      if($valueLength > $labelMax) {
+         $labelMax = $valueLength;
+      }
+
+      $yPos = $yBottom;
+   }
+
+
+   // label x pos
+   $labelxPos = $data['days']['total'] * CFG_SIZE_DAY + CFG_SIZE_PADDING;
+
+
+   // img
+   $imgW = $data['days']['total'] * CFG_SIZE_DAY
+      + $labelMax * CFG_SIZE_TEXT_WIDTH
+      + CFG_SIZE_PADDING * 2;
+   $imgH = CFG_SIZE_GRAPH_HEIGHT;
+
+   $img = ngNewImg($imgW, $imgH);
+
+
+   // draw
+   foreach($labels as $i=>$label) {
+
+      // draw even row
+      if($i%2 == 0) {
+         imagefilledrectangle(
+            $img,
+            0,       $label['yPos1'],
+            $imgW-1, $label['yPos2'],
+            CFG_COLOR_ROW_EVEN
+         );
+      }
+
+      // label
+      imagestring(
+         $img,
+         CFG_SIZE_TEXT,
+         $labelxPos,
+         $label['yPos1']+CFG_SIZE_PADDING,
+         sprintf('%'.$labelMax.'s', $label['value']),
+         CFG_COLOR_TEXT_MAIN
+      );
+   }
+
+
+   return $img;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphYear(&$img, $data, $y) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = $data['days'][$y] * CFG_SIZE_DAY;
+
+   ngGraphBar(
+      $img,
+      $xPos,
+      $barW,
+      $data['dl']['year'][$y],
+      $data['ul']['year'][$y],
+      $data['highest']['dlul']['year']
+   );
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphMonth(&$img, $data, $ym) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = $data['days'][$ym] * CFG_SIZE_DAY;
+
+   ngGraphBar(
+      $img,
+      $xPos,
+      $barW,
+      $data['dl']['month'][$ym],
+      $data['ul']['month'][$ym],
+      $data['highest']['dlul']['month']
+   );
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphDay(&$img, $data, $ymd) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   // bar width
+   $barW = CFG_SIZE_DAY;
+
+   ngGraphBar(
+      $img,
+      $xPos,
+      $barW,
+      $data['dl']['day'][$ymd],
+      $data['ul']['day'][$ymd],
+      $data['highest']['dlul']['day']
+   );
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/******************************************************************************/
+function ngGraphCumul(&$img, $data, $ymd) {
+
+   // horizontal starting position
+   static $xPos = 0;
+
+   static $volumeD = 0;
+   static $volumeU = 0;
+
+   $volumeD += $data['dl']['day'][$ymd];
+   $volumeU += $data['ul']['day'][$ymd];
+
+   // bar width
+   $barW = CFG_SIZE_DAY;
+
+   if($data['tl']['day'][$ymd] > 0) {
+      ngGraphBar(
+         $img,
+         $xPos,
+         $barW,
+         $volumeD,
+         $volumeU,
+         $data['highest']['dlul']['total']
+      );
+   }
+
+   // update starting pos
+   $xPos += $barW;
+}
+
+
+
+
+/****************************************************************** main loop */
+echo "
+********************************************************************************
+networx-graph
+
+Commands
+   r %file%   run with exported stats file
+   x          exit
+********************************************************************************";
+
+while(true) {
+
+   echo "\n\n>";
+   $in = trim(fgets(STDIN));
+
+   # exit
+   if($in == 'x') {
+      break;
+   }
+
+   # process
+   elseif(substr($in,0,1) == 'r') {
+      preg_match('/^r\s+(.*)\s*$/si', $in, $m);
+      ngGraph($m[1]);
+   }
+
+   # unknown command
+   else {
+      echo "\nUnknown command";
+   }
+}
+exit(1);
+?>
